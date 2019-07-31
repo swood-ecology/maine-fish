@@ -10,7 +10,6 @@ setwd("~/Google_Drive/R/NEFI_course/EF_Activities/data")
 # load packages -----------------------------------------------------------
 
 library(rjags)
-library(jagsRun)
 library(MCMCvis)
 
 
