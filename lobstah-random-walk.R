@@ -27,29 +27,29 @@ ggplot(mean.maine.lobstah, aes(x = Year, y = Biomass)) +
   theme_bw()
 
 
-###############################
-# Implement random walk model #
-###############################
+######################################
+# Implement simple random walk model #
+######################################
 
 attach(mean.maine.lobstah)
 
 # Define Random Walk model
 RandomWalk = "
 model{
-#### Data Model
-for(t in 1:n){
-y[t] ~ dnorm(x[t],tau_obs)
-}
+  #### Data Model
+  for(t in 1:n){
+    y[t] ~ dnorm(x[t],tau_obs)
+  }
 
-#### Process Model
-for(t in 2:n){
-x[t] ~ dnorm(x[t-1],tau_add)
-}
+  #### Process Model
+  for(t in 2:n){
+    x[t] ~ dnorm(x[t-1],tau_add)
+  }
 
-#### Priors
-x[1] ~ dnorm(x_ic,tau_ic)
-tau_obs ~ dgamma(a_obs,r_obs)
-tau_add ~ dgamma(a_add,r_add)
+  #### Priors
+  x[1] ~ dnorm(x_ic,tau_ic)
+  tau_obs ~ dgamma(a_obs,r_obs)
+  tau_add ~ dgamma(a_add,r_add)
 }
 "
 
@@ -96,9 +96,9 @@ ecoforecastR::ciEnvelope(mean.maine.lobstah$Year,ci[1,],ci[3,],col=ecoforecastR:
 points(mean.maine.lobstah$Year,mean.maine.lobstah$Biomass,pch="+",cex=0.5)
 
 
-##############################
-# Forecast random walk model #
-##############################
+#####################################
+# Forecast simple random walk model #
+#####################################
 
 # Define function to print
 plot.run <- function(){
@@ -166,5 +166,68 @@ plot.run()
 IC.Q.ci = apply(IC.Q.model,2,quantile,c(0.025,0.5,0.975))
 ecoforecastR::ciEnvelope(time2,IC.Q.ci[1,],IC.Q.ci[3,],col=col.alpha(N.cols[1],trans))
 lines(time2,IC.Q.ci[2,],lwd=0.5)
+
+detach(mean.maine.lobstah)
+
+############################################
+# Implement hierarchical random walk model #
+############################################
+
+# Read data
+lobstah.data <- 
+  readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/LobsterEcoForecastingProjectData.rds")
+
+lobstah.data <- lobstah.data %>% select(Year:Depth, ZONEID)
+
+mean.lobstah.data <- aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID, 
+                                lobstah.data, mean)
+
+attach(mean.lobstah.data)
+
+# Define the model
+HigherRW = "
+model{
+  #### Data Model
+  for(t in 1:n){
+    y[t] ~ dnorm(x[t],tau_obs)
+  }
+
+  #### Random Effect
+  for(g in 1:ng){
+    alpha_site[g] ~ dnorm(0,tau_site)
+  }
+  
+  #### Process Model
+  for(t in 2:n){
+    mu[t] <- x[t-1] + alpha_site[zoneid[t]]
+    x[t] ~ dnorm(mu[t], tau_add)
+  }
+
+  #### Priors
+  x[1] ~ dnorm(x_ic,tau_ic)
+  tau_obs ~ dgamma(a_obs,r_obs)
+  tau_add ~ dgamma(a_add,r_add)
+  tau_site ~ dgamma(0.1,0.1)  ## site random effect precision
+}
+"
+
+hrw.data <- list(y = Biomass, 
+                 n = Biomass %>% length(), 
+                 ng = ZONEID %>% unique() %>% length(), 
+                 zoneid=ZONEID %>% as.numeric(),
+                 x_ic = 20, tau_ic = 0.5, a_obs = 1, r_obs = 1, a_add = 1, r_add = 1)
+
+hrw.model <- jags.model(data = hrw.data, 
+                          file = textConnection(HigherRW), 
+                          n.chains = 3, 
+                          n.adapt = 2000)
+
+hrw.out <- coda.samples (model = hrw.model,
+                           variable.names = c("tau_add","tau_obs","tau_site","alpha_site"),
+                           n.iter = 10000)
+
+hrw.out.x <- coda.samples (model = hrw.model,
+                         variable.names = c("x"),
+                         n.iter = 10000)
 
 

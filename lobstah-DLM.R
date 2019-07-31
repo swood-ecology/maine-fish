@@ -3,7 +3,7 @@ library(rjags)
 
 
 # Read in data
-fish.data <- readRDS("~/Box Sync/Courses/NEFI/Allyn_EcoForecastingProjectData.rds")
+fish.data <- readRDS("~/Box Sync/Courses/NEFI/maineAllyn_EcoForecastingProjectData.rds")
 
 # Filter out lobster in Maine
 maine.lobstah <- fish.data %>%
@@ -70,7 +70,7 @@ model{
 
   #### Random Effects                                                                                    
   tau_alpha~dgamma(0.1,0.1)                                                                     
-  for(i in 1:nrep){                                                                             
+  for(i in 1:nseasons){                                                                             
     alpha[i]~dnorm(0,tau_alpha)                                                                  
   }
 
