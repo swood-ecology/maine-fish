@@ -132,23 +132,39 @@ forecastRW <- function(IC,Q,n=Nmc){
 
 # Deterministic forecast
 det <- forecastRW(IC=mean(rw.out[,ncol(rw.out)]),
-          Q=sd(rw.out[,ncol(rw.out)]),
+          Q=0,
           n=1)
 plot.run()
 lines(time2, det, col="purple", lwd=3)
 
+# Depends on Q
+det <- forecastRW(IC=mean(rw.out[,ncol(rw.out)]),
+                  Q=sd(rw.out[,ncol(rw.out)]),
+                  n=1)
+plot.run()
+lines(time2, det, col="purple", lwd=3)
 
-# Non-deterministic, depends on IC
+
+# Depends on IC
 prow = sample.int(nrow(rw.out),Nmc,replace=TRUE)
 
 IC.model <- forecastRW(IC=rw.out[prow,ncol(rw.out)],
-                  Q=sd(rw.out[,ncol(rw.out)]),
+                  Q=0,
                   n=Nmc)
 plot.run()
 IC.ci = apply(IC.model,2,quantile,c(0.025,0.5,0.975))
 ecoforecastR::ciEnvelope(time2,IC.ci[1,],IC.ci[3,],col=col.alpha(N.cols[1],trans))
 lines(time2,IC.ci[2,],lwd=0.5)
 
+# Depends on IC and Q
+prow = sample.int(nrow(rw.out),Nmc,replace=TRUE)
 
+IC.Q.model <- forecastRW(IC=rw.out[prow,ncol(rw.out)],
+                       Q=sd(rw.out[,ncol(rw.out)]),
+                       n=Nmc)
+plot.run()
+IC.Q.ci = apply(IC.Q.model,2,quantile,c(0.025,0.5,0.975))
+ecoforecastR::ciEnvelope(time2,IC.Q.ci[1,],IC.Q.ci[3,],col=col.alpha(N.cols[1],trans))
+lines(time2,IC.Q.ci[2,],lwd=0.5)
 
 
