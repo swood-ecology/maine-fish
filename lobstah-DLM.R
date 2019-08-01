@@ -3,13 +3,11 @@ library(rjags)
 
 
 # Read in data
-fish.data <- readRDS("~/Box Sync/Courses/NEFI/maineAllyn_EcoForecastingProjectData.rds")
+fish.data <- readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/LobsterEcoForecastingProjectData.rds")
 
 # Filter out lobster in Maine
 maine.lobstah <- fish.data %>%
-  select(-Survey, -X) %>%
-  filter(CommonName == "AMERICAN LOBSTER") %>%
-  filter(Y > 42.874)
+  select(Year:Depth, ZONEID)
 
 # Plot all data
 ggplot(maine.lobstah, aes(y = Biomass, x = Year)) +
@@ -19,7 +17,7 @@ ggplot(maine.lobstah, aes(y = Biomass, x = Year)) +
 
 # Take annual average
 mean.maine.lobstah <- aggregate(
-  cbind(Biomass, Depth, SeasonalSST) ~ Year,
+  cbind(Biomass, Depth, SeasonalSST) ~ Year+ZONEID+Season,
   maine.lobstah, mean
 )
 
@@ -48,14 +46,18 @@ points(mean.maine.lobstah$Year, mean.maine.lobstah$Biomass, pch = "+", cex = 0.5
 
 
 # Take seasonal average
-season.maine.lobstah <- aggregate(
-  cbind(Biomass, Depth, SeasonalSST) ~ Year + Season,
+zone.lobstah <- aggregate(
+  cbind(Biomass) ~ Year + ZONEID,
   maine.lobstah, mean
 )
 
 # Plot average biomass trend
-ggplot(season.maine.lobstah, aes(x = Year, y = Biomass, facet = Season)) +
-  geom_line(aes(color = Season)) +
+ggplot(aggregate(
+  cbind(Biomass) ~ Year + ZONEID,
+  maine.lobstah, mean
+), 
+aes(x = Year, y = Biomass, facet = ZONEID)) +
+  geom_line(aes(color = ZONEID)) +
   theme_bw()
 
 

@@ -169,6 +169,7 @@ lines(time2,IC.Q.ci[2,],lwd=0.5)
 
 detach(mean.maine.lobstah)
 
+
 ############################################
 # Implement hierarchical random walk model #
 ############################################
@@ -219,15 +220,63 @@ hrw.data <- list(y = Biomass,
 
 hrw.model <- jags.model(data = hrw.data, 
                           file = textConnection(HigherRW), 
-                          n.chains = 3, 
-                          n.adapt = 2000)
+                          n.chains = 3)
 
 hrw.out <- coda.samples (model = hrw.model,
-                           variable.names = c("tau_add","tau_obs","tau_site","alpha_site"),
-                           n.iter = 10000)
+                           variable.names = c("tau_add","tau_obs","tau_site", "alpha_site"),
+                           n.iter = 30000)
 
 hrw.out.x <- coda.samples (model = hrw.model,
                          variable.names = c("x"),
-                         n.iter = 10000)
+                         n.iter = 30000)
 
+burnin = 15000
+hrw.burn <- window(hrw.out, burnin)
+hrw.burn.x <- window(hrw.out.x, burnin)
+
+
+###########################################
+# Forecast hierarchical random walk model #
+###########################################
+
+# Store model runs as matrices
+hrw.params <- as.matrix(hrw.burn)
+hrw.x <- as.matrix(hrw.burn.x)
+
+# Define global parameters: NT = number of years to forecast; Nmc = number of MC sims
+NT = 20
+NG = ZONEID %>% unique() %>% length()
+Nmc = 1000
+time1 = Year       ## calibration period
+time2 = seq(from=Year[length(Year)]+1,to=Year[length(Year)]+NT, by=1)   ## forecast period
+time = c(time1, time2)
+IC = hrw.x[sample.int(nrow(hrw.x),Nmc,replace=TRUE),]
+hrw.alpha = hrw.params[,1:NG]
+alpha = hrw.alpha[sample.int(nrow(hrw.alpha),Nmc,replace=TRUE),]
+
+# Define forecasting function
+##` @param IC     Initial Conditions
+##` @param Nmc    Size of Monte Carlo ensemble
+##` @param Q      Variance of prediction
+##` @param alpha  Vector of group parameters
+##` @param NT     Number of years to forecast
+##` @param groups List of groups
+forecastHRW <- function(IC,Q,Nmc,NT,alpha,groups){
+  N <- matrix(NA,Nmc,NT)                    ## storage
+  mu <- matrix(NA,Nmc,NT)                   ## storage
+  Nprev <- IC[ , ncol(IC)]                  ## initialize
+  
+  for(t in 1:NT){
+    for(n in 1:ncol(IC)){
+      mu[,t] <- Nprev + alpha[ ,groups[n]]  ## Define mean as depending on group
+      N[,t] <- rnorm(Nmc, mu[ ,t], Q)       ## predict next step
+      Nprev <- N[,t]                        ## update IC
+    }
+  }
+  return(N)
+}
+
+# Depend on global SD
+hrw.fore <- forecastHRW(IC = IC, Q = sd(hrw.x[,ncol(hrw.x)]), Nmc=Nmc, 
+                        alpha = alpha, NT = NT, groups = ZONEID %>% as.numeric())
 
