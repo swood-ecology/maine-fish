@@ -4,39 +4,46 @@ library(rjags)
 # Read in data
 lobstah.data <- 
   readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/LobsterEcoForecastingProjectData.rds")
-
 lobstah.data <- lobstah.data %>% select(Year:Depth, ZONEID)
 
 # Visualize data
-ggplot(lobstah.data, aes(y = Biomass, x = Year)) + 
+hist(lobstah.data$Biomass)
+hist(log(lobstah.data$Biomass+0.000001))
+
+# Take log and drop outliers
+lobstah.data$logBiomass <- log(lobstah.data$Biomass + 0.000001) 
+lobstah <- lobstah.data %>%
+  filter(logBiomass > mean(lobstah.data$logBiomass) - 2*sd(lobstah.data$logBiomass))
+
+ggplot(lobstah, aes(y = logBiomass, x = Year)) + 
   geom_point(alpha = 0.5) + 
-  ylim(0,500) +
   theme_bw()
 
-hist(lobstah.data$Biomass)
-
 # Plot all data averaged together
-ggplot(aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year, lobstah.data, mean), 
-       aes(y = Biomass, x = Year)) + 
+ggplot(aggregate(cbind(logBiomass, Depth, SeasonalSST) ~ Year, lobstah, mean), 
+       aes(y = logBiomass, x = Year)) + 
   geom_line() + 
   theme_bw()
 
 # Plot seasons separately
-ggplot(aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + Season, lobstah.data, 
+ggplot(aggregate(cbind(logBiomass, Depth, SeasonalSST) ~ Year + Season, lobstah, 
                  mean), 
-       aes(y = Biomass, x = Year, group=Season, color=Season)) + 
+       aes(y = logBiomass, x = Year, group=Season, color=Season)) + 
   geom_line() + 
   theme_bw()
 
 # Plot zones separately
-ggplot(aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID, lobstah.data, 
+ggplot(aggregate(cbind(logBiomass, Depth, SeasonalSST) ~ Year + ZONEID, 
+                 lobstah %>% filter(Season == 'SPRING'), 
                  mean), 
-       aes(y = Biomass, x = Year, group=ZONEID, color=ZONEID)) + 
+       aes(y = logBiomass, x = Year, group=ZONEID, color=ZONEID)) + 
   geom_line() + 
   theme_bw()
 
 # Aggregate data to year
-year.lobstah.data <- aggregate(Biomass ~ Year, lobstah.data, mean)
+year.lobstah.data <- aggregate(logBiomass ~ Year, 
+                               lobstah %>% filter(Season == 'SPRING'), 
+                               mean)
 
 
 ######################################
@@ -66,25 +73,25 @@ model{
 "
 
 # Define data and parameters
-data <- list(y=log(Biomass+0.000001),
-             n=length(Biomass),
-             x_ic=20,
-             tau_ic=0.5,a_obs=1,r_obs=1,a_add=1,r_add=1)
+data <- list(y=logBiomass,
+             n=length(logBiomass),
+             x_ic=2.5,
+             tau_ic=1,a_obs=1.5,r_obs=1,a_add=1.5,r_add=1)
 
 # Define initial values
-nchain = 3
+nchain = 4
 init <- list()
 for(i in 1:nchain){
-  y.samp = sample(Biomass,length(Biomass),
+  y.samp = sample(logBiomass,length(logBiomass),
                   replace=TRUE)
-  init[[i]] <- list(tau_add=1/var(diff(log(y.samp))),tau_obs=5/var(log(y.samp)))
+  init[[i]] <- list(tau_add=1/var(diff(log(y.samp))),tau_obs=1/var(log(y.samp)))
 }
 
 # Run model
 j.model   <- jags.model (file = textConnection(RandomWalk),
                          data = data,
                          inits = init,
-                         n.chains = 3)
+                         n.chains = 4)
 
 ## burn-in
 jags.out   <- coda.samples (model = j.model,
@@ -93,7 +100,7 @@ jags.out   <- coda.samples (model = j.model,
 gelman.plot(jags.out)
 
 burnin = 1000                                ## determine convergence
-jags.burn <- window(jags.out,start=burnin)  ## remove burn-in
+jags.burn <- window(jags.out, start=burnin)  ## remove burn-in
 summary(jags.burn) ## check diagnostics post burn-in
 
 # CI plot
@@ -101,9 +108,10 @@ rw.out <- as.matrix(jags.burn)
 
 x.cols <- grep("^x",colnames(rw.out)) ## grab all columns that start with the letter x
 ci <- apply(rw.out[,x.cols],2,quantile,c(0.025,0.5,0.975)) ## model was fit on log scale
-plot(mean.maine.lobstah$Year,ci[2,],type='n',ylim=c(0,50))
-ecoforecastR::ciEnvelope(mean.maine.lobstah$Year,ci[1,],ci[3,],col=ecoforecastR::col.alpha("lightBlue",0.75))
-points(mean.maine.lobstah$Year,mean.maine.lobstah$Biomass,pch="+",cex=0.5)
+plot(Year,ci[2,],type='n',ylim=c(0,7))
+ecoforecastR::ciEnvelope(Year,ci[1,],ci[3,],
+                         col=ecoforecastR::col.alpha("lightBlue",0.75))
+points(Year,logBiomass,pch="+",cex=0.5)
 
 
 #####################################
@@ -114,9 +122,9 @@ points(mean.maine.lobstah$Year,mean.maine.lobstah$Biomass,pch="+",cex=0.5)
 plot.run <- function(){
   x.cols <- grep("^x",colnames(rw.out)) ## grab all columns that start with the letter x
   ci <- apply(rw.out[,x.cols],2,quantile,c(0.025,0.5,0.975)) ## model was fit on log scale
-  plot(Year,ci[2,],type='n',ylim=c(0,75),xlim=c(time[1], time[length(time)]))
+  plot(Year,ci[2,],type='n',ylim=c(0,7),xlim=c(time[1], time[length(time)]))
   ecoforecastR::ciEnvelope(Year,ci[1,],ci[3,],col=ecoforecastR::col.alpha("lightBlue",0.75))
-  points(Year,Biomass,pch="+",cex=0.5)
+  points(Year,logBiomass,pch="+",cex=0.5)
 }
 
 # Define global parameters: NT = number of years to forecast; Nmc = number of MC sims
@@ -125,6 +133,8 @@ Nmc <- 1000
 time1 = Year       ## calibration period
 time2 = seq(from=Year[length(Year)],to=Year[length(Year)]+(NT-1), by=1)   ## forecast period
 time = c(time1, time2)
+N.cols <- c("grey50","red","green","blue","orange") ## set colors
+trans <- 0.8       ## set transparancy
 
 # Define forecasting function
 ##` @param IC   Initial Conditions
@@ -162,7 +172,7 @@ IC.model <- forecastRW(IC=rw.out[prow,ncol(rw.out)],
                   n=Nmc)
 plot.run()
 IC.ci = apply(IC.model,2,quantile,c(0.025,0.5,0.975))
-ecoforecastR::ciEnvelope(time2,IC.ci[1,],IC.ci[3,],col=col.alpha(N.cols[1],trans))
+ecoforecastR::ciEnvelope(time2,IC.ci[1,],IC.ci[3,],col=ecoforecastR::col.alpha(N.cols[1],trans))
 lines(time2,IC.ci[2,],lwd=0.5)
 
 # Depends on IC and Q
@@ -173,7 +183,7 @@ IC.Q.model <- forecastRW(IC=rw.out[prow,ncol(rw.out)],
                        n=Nmc)
 plot.run()
 IC.Q.ci = apply(IC.Q.model,2,quantile,c(0.025,0.5,0.975))
-ecoforecastR::ciEnvelope(time2,IC.Q.ci[1,],IC.Q.ci[3,],col=col.alpha(N.cols[1],trans))
+ecoforecastR::ciEnvelope(time2,IC.Q.ci[1,],IC.Q.ci[3,],col=ecoforecastR::col.alpha(N.cols[1],trans))
 lines(time2,IC.Q.ci[2,],lwd=0.5)
 
 detach(year.lobstah.data)
@@ -183,8 +193,9 @@ detach(year.lobstah.data)
 # Implement hierarchical random walk model #
 ############################################
 
-zone.lobstah.data <- aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID, 
-                                lobstah.data, mean)
+zone.lobstah.data <- aggregate(cbind(logBiomass, Depth, SeasonalSST) ~ Year + ZONEID, 
+                                lobstah %>% filter(Season == "SPRING"), 
+                               mean)
 
 attach(zone.lobstah.data)
 
@@ -215,27 +226,35 @@ model{
 }
 "
 
-hrw.data <- list(y=log(Biomass+0.000001), 
-                 n = Biomass %>% length(), 
+# Define data
+hrw.data <- list(y=logBiomass, 
+                 n = logBiomass %>% length(), 
                  ng = ZONEID %>% unique() %>% length(), 
                  zoneid=ZONEID %>% as.numeric(),
-                 x_ic = 20, tau_ic = 0.5, a_obs = 1, r_obs = 1, a_add = 1, r_add = 1)
+                 x_ic=2.5,
+                 tau_ic=1,a_obs=1.5,r_obs=1,a_add=1.5,r_add=1)
 
+# Define initial values
+nchain = 4
+init <- list()
+for(i in 1:nchain){
+  y.samp = sample(logBiomass,length(logBiomass),
+                  replace=TRUE)
+  init[[i]] <- list(tau_add=1/var(diff(log(y.samp))),tau_obs=1/var(log(y.samp)))
+}
+
+# Run models
 hrw.model <- jags.model(data = hrw.data, 
-                          file = textConnection(HigherRW), 
-                          n.chains = 3)
+                        file = textConnection(HigherRW), 
+                        n.chains = 4,
+                        n.adapt = 1000)
 
-hrw.out <- coda.samples (model = hrw.model,
-                           variable.names = c("tau_add","tau_obs","tau_site", "alpha_site"),
-                           n.iter = 30000)
+hrw.samp <- coda.samples (model = hrw.model,
+                           variable.names = c("x","alpha_site","tau_add","tau_obs","tau_site"),
+                           n.iter = 10000)
 
-hrw.out.x <- coda.samples (model = hrw.model,
-                         variable.names = c("x"),
-                         n.iter = 30000)
-
-burnin = 15000
-hrw.burn <- window(hrw.out, burnin)
-hrw.burn.x <- window(hrw.out.x, burnin)
+burnin = 1000
+hrw.burn <- window(hrw.samp, burnin)
 
 
 ###########################################
@@ -244,7 +263,8 @@ hrw.burn.x <- window(hrw.out.x, burnin)
 
 # Store model runs as matrices
 hrw.params <- as.matrix(hrw.burn)
-hrw.x <- as.matrix(hrw.burn.x)
+hrw.x <- hrw.params[ ,11:ncol(hrw.params)]
+hrw.params <- hrw.params[, 1:10]
 
 # Define global parameters: NT = number of years to forecast; Nmc = number of MC sims
 NT = 20
