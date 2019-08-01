@@ -2,6 +2,81 @@ library(tidyverse)
 library(rjags)
 
 
+################################################
+# Implement hierarchical, dynamic linear model #
+################################################
+
+# Read data
+lobstah.data <- 
+  readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/LobsterEcoForecastingProjectData.rds")
+
+lobstah.data <- lobstah.data %>% select(Year:Depth, ZONEID)
+
+mean.lobstah.data <- aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID, 
+                               lobstah.data, mean)
+
+attach(mean.lobstah.data)
+
+# Define the model
+HigherDLM = "
+  model{
+  #### Data Model
+  for(t in 1:n){
+    y[t] ~ dnorm(x[t],tau_obs)
+  }
+
+  #### Random Effect
+  for(g in 1:ng){
+    alpha_site[g] ~ dnorm(0,tau_site)
+  }
+
+  #### Process Model
+  for(t in 2:n){
+    mu[t] <- x[t-1] + alpha_site[zoneid[t]] + beta1*x1[t] + beta2*x2[t]
+    x[t] ~ dnorm(mu[t], tau_add)
+  }
+
+  #### Priors
+  x[1] ~ dnorm(x_ic,tau_ic)
+  beta1 ~ dnorm(0,1)
+  beta2 ~ dnorm(0,1)
+  tau_obs ~ dgamma(a_obs,r_obs)
+  tau_add ~ dgamma(a_add,r_add)
+  tau_site ~ dgamma(0.1,0.1)  ## site random effect precision
+}
+"
+
+h.dlm.data <- list(y = Biomass, x1 = Depth, x2 = SeasonalSST,
+                 n = Biomass %>% length(), 
+                 ng = ZONEID %>% unique() %>% length(), 
+                 zoneid = ZONEID %>% as.numeric(), x_ic = 20, tau_ic = 0.5, 
+                 a_obs = 1, r_obs = 1, a_add = 1, r_add = 1)
+
+h.dlm.model <- jags.model(data = h.dlm.data, file = textConnection(HigherDLM), 
+                          n.chains = 3)
+
+h.dlm.hier <- coda.samples (model = h.dlm.model,
+                           variable.names = c("alpha_site"),
+                           n.iter = 30000)
+
+h.dlm.line <- coda.samples (model = h.dlm.model,
+                            variable.names = c("beta1", "beta2"),
+                            n.iter = 30000)
+
+h.dlm.err <- coda.samples (model = h.dlm.model,
+                           variable.names = c("tau_add","tau_obs","tau_site"),
+                           n.iter = 30000)
+
+h.dlm.x <- coda.samples (model = h.dlm.model,
+                         variable.names = c("x"),
+                         n.iter = 30000)
+
+burnin = 15000
+hrw.burn <- window(hrw.out, burnin)
+hrw.burn.x <- window(hrw.out.x, burnin)
+
+
+
 # Read in data
 fish.data <- readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/LobsterEcoForecastingProjectData.rds")
 
@@ -17,7 +92,7 @@ ggplot(maine.lobstah, aes(y = Biomass, x = Year)) +
 
 # Take annual average
 mean.maine.lobstah <- aggregate(
-  cbind(Biomass, Depth, SeasonalSST) ~ Year+ZONEID+Season,
+  cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID + Season,
   maine.lobstah, mean
 )
 

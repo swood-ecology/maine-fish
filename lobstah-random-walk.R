@@ -124,7 +124,7 @@ forecastRW <- function(IC,Q,n=Nmc){
   N <- matrix(NA,n,NT)  ## storage
   Nprev <- IC           ## initialize
   for(t in 1:NT){
-    N[,t] <- rnorm(n,Nprev,Q)       ## predict next step
+    N[,t] <- rnorm(n, Nprev, Q)     ## predict next step
     Nprev <- N[,t]                  ## update IC
   }
   return(N)
