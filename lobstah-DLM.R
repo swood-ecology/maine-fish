@@ -57,21 +57,21 @@ h.dlm.model <- jags.model(data = h.dlm.data, file = textConnection(HigherDLM),
 
 h.dlm.hier <- coda.samples (model = h.dlm.model,
                            variable.names = c("alpha_site"),
-                           n.iter = 30000)
+                           n.iter = 5000)
 
 h.dlm.line <- coda.samples (model = h.dlm.model,
                             variable.names = c("beta1", "beta2"),
-                            n.iter = 30000)
+                            n.iter = 5000)
 
 h.dlm.err <- coda.samples (model = h.dlm.model,
                            variable.names = c("tau_add","tau_obs","tau_site"),
-                           n.iter = 30000)
+                           n.iter = 5000)
 
 h.dlm.x <- coda.samples (model = h.dlm.model,
                          variable.names = c("x"),
-                         n.iter = 30000)
+                         n.iter = 5000)
 
-burnin = 15000
+burnin = 1000
 hrw.burn <- window(hrw.out, burnin)
 hrw.burn.x <- window(hrw.out.x, burnin)
 

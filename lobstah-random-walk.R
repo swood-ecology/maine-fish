@@ -1,37 +1,49 @@
 library(tidyverse)
 library(rjags)
 
-
 # Read in data
-fish.data <- readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/Allyn_EcoForecastingProjectData.rds")
+lobstah.data <- 
+  readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/LobsterEcoForecastingProjectData.rds")
 
-# Filter out lobster in Maine
-maine.lobstah <- fish.data %>% 
-  select(-Survey, -X) %>%
-  filter(CommonName == "AMERICAN LOBSTER") %>%
-  filter(Y > 42.874)
+lobstah.data <- lobstah.data %>% select(Year:Depth, ZONEID)
 
-# Plot all data
-ggplot(maine.lobstah, aes(y = Biomass, x = Year)) + 
+# Visualize data
+ggplot(lobstah.data, aes(y = Biomass, x = Year)) + 
   geom_point(alpha = 0.5) + 
   ylim(0,500) +
   theme_bw()
 
-# Take annual average
-mean.maine.lobstah <- aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year, 
-                                maine.lobstah, mean)
+hist(lobstah.data$Biomass)
 
-# Plot average biomass trend
-ggplot(mean.maine.lobstah, aes(x = Year, y = Biomass)) + 
+# Plot all data averaged together
+ggplot(aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year, lobstah.data, mean), 
+       aes(y = Biomass, x = Year)) + 
   geom_line() + 
   theme_bw()
+
+# Plot seasons separately
+ggplot(aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + Season, lobstah.data, 
+                 mean), 
+       aes(y = Biomass, x = Year, group=Season, color=Season)) + 
+  geom_line() + 
+  theme_bw()
+
+# Plot zones separately
+ggplot(aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID, lobstah.data, 
+                 mean), 
+       aes(y = Biomass, x = Year, group=ZONEID, color=ZONEID)) + 
+  geom_line() + 
+  theme_bw()
+
+# Aggregate data to year
+year.lobstah.data <- aggregate(Biomass ~ Year, lobstah.data, mean)
 
 
 ######################################
 # Implement simple random walk model #
 ######################################
 
-attach(mean.maine.lobstah)
+attach(year.lobstah.data)
 
 # Define Random Walk model
 RandomWalk = "
@@ -54,12 +66,10 @@ model{
 "
 
 # Define data and parameters
-data <- list(y=Biomass,
+data <- list(y=log(Biomass+0.000001),
              n=length(Biomass),
              x_ic=20,
              tau_ic=0.5,a_obs=1,r_obs=1,a_add=1,r_add=1)
-
-
 
 # Define initial values
 nchain = 3
@@ -144,7 +154,6 @@ det <- forecastRW(IC=mean(rw.out[,ncol(rw.out)]),
 plot.run()
 lines(time2, det, col="purple", lwd=3)
 
-
 # Depends on IC
 prow = sample.int(nrow(rw.out),Nmc,replace=TRUE)
 
@@ -167,23 +176,17 @@ IC.Q.ci = apply(IC.Q.model,2,quantile,c(0.025,0.5,0.975))
 ecoforecastR::ciEnvelope(time2,IC.Q.ci[1,],IC.Q.ci[3,],col=col.alpha(N.cols[1],trans))
 lines(time2,IC.Q.ci[2,],lwd=0.5)
 
-detach(mean.maine.lobstah)
+detach(year.lobstah.data)
 
 
 ############################################
 # Implement hierarchical random walk model #
 ############################################
 
-# Read data
-lobstah.data <- 
-  readRDS("~/Box Sync/Courses/NEFI/maine-fish/data/LobsterEcoForecastingProjectData.rds")
-
-lobstah.data <- lobstah.data %>% select(Year:Depth, ZONEID)
-
-mean.lobstah.data <- aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID, 
+zone.lobstah.data <- aggregate(cbind(Biomass, Depth, SeasonalSST) ~ Year + ZONEID, 
                                 lobstah.data, mean)
 
-attach(mean.lobstah.data)
+attach(zone.lobstah.data)
 
 # Define the model
 HigherRW = "
@@ -212,7 +215,7 @@ model{
 }
 "
 
-hrw.data <- list(y = Biomass, 
+hrw.data <- list(y=log(Biomass+0.000001), 
                  n = Biomass %>% length(), 
                  ng = ZONEID %>% unique() %>% length(), 
                  zoneid=ZONEID %>% as.numeric(),
@@ -280,3 +283,4 @@ forecastHRW <- function(IC,Q,Nmc,NT,alpha,groups){
 hrw.fore <- forecastHRW(IC = IC, Q = sd(hrw.x[,ncol(hrw.x)]), Nmc=Nmc, 
                         alpha = alpha, NT = NT, groups = ZONEID %>% as.numeric())
 
+detach(zone.lobstah.data)
