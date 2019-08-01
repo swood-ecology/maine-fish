@@ -66,7 +66,7 @@ DATA <- list(
   NY = NY,
   NZ = NZ,
   x_ic = mean(log(out)), #mean of biomass for initial value
-  tau_ic = 1/(var(as.vector(log(out)))*100)) #variance biomass times 10
+  tau_ic = 1/(var(as.vector(log(out)))*100)) #variance biomass times 100
 
 
 
@@ -94,13 +94,13 @@ setwd("~/Google_Drive/R/NEFI_course/Results")
   }
   
   
-  #data model
+  #process model
   for (i in 2:NY)
   {
     for (j in 1:NZ)
     {
       x[i,j] ~ dnorm(mu[i,j], tau_add)
-      mu[i,j] <- x[i-1,j] + eta + alpha[i] + gamma[j] +
+      mu[i,j] <- x[i-1,j] + eta + gamma[j] + #alpha[i] +
                   beta_x * x[i-1,j] + kappa * sst[i,j]
     }
     x_all[i] <- mean(x[i,])
@@ -118,11 +118,11 @@ setwd("~/Google_Drive/R/NEFI_course/Results")
   #eta - grand mean
   eta ~ dnorm(0, 0.01)
   
-  #alpha - year effect
-  for (i in 1:NY)
-  {
-    alpha[i] ~ dnorm(0, tau_alpha)
-  }
+  # #alpha - year effect
+  # for (i in 1:NY)
+  # {
+  #   alpha[i] ~ dnorm(0, tau_alpha)
+  # }
  
   #gamma - zone effect
   for (j in 1:NZ)
@@ -258,9 +258,8 @@ fit <- rjags::coda.samples(jm,
 
 #summarize output
 MCMCvis::MCMCsummary(fit, excl = c('x', 'x_all', 'ysim', 'ysim_all'), round = 2)
-MCMCvis::MCMCplot(fit, params = 'alpha')
+#MCMCvis::MCMCplot(fit, params = 'alpha')
 MCMCvis::MCMCplot(fit, params = 'gamma')
-MCMCvis::MCMCplot(fit, params = c('alpha_k', 'beta_k', 'beta_x'))
 
 #extract median and CI for x
 x_med <- MCMCvis::MCMCpstr(fit, params = 'x', 
@@ -325,14 +324,38 @@ for (i in 1:NCOL(x_med))
 }
 
 
-#~93 percent of new values fell in 95% pred interval
-sum(exp(out_wh) > ys_LCI[to.na,] &
-  exp(out_wh) < ys_UCI[to.na,]) / length(out_wh)
+#probability integral transform plot
+pin_vec <- rep(NA, 19)
+ch_vec <- seq(0.05, 0.95, length = 19)
+for (i in 1:length(ch_vec))
+{
+  #i <- 1
+  rn <- ch_vec[i] / 2
+  temp_LCI <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
+                                func = function(x) quantile(exp(x), probs = 0.5 - rn))[[1]]
+  temp_UCI <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
+                                func = function(x) quantile(exp(x), probs = 0.5 + rn))[[1]]
+  pin_vec[i] <- sum(exp(out_wh) > temp_LCI[to.na,] &
+        exp(out_wh) < temp_UCI[to.na,]) / length(out_wh)
+}
+
+#coverage plot
+par(mfrow = c(1,1))
+plot(ch_vec, pin_vec, ylab = 'Prop witheld data in prediction interval',
+     xlab = 'Prediction interval')
+abline(a = 0, b = 1, col = 'red', lty = 2)
 
 #RMSE = 30.6
-(RMSE <- sqrt(mean((x_med[to.na,] - exp(out_wh))^2)))
-RMSE / diff(range(out))
+# x_ch <- MCMCvis::MCMCchains(fit, params = 'x')
+# (RMSE <- sqrt(mean((x_med[to.na,] - exp(out_wh))^2)))
+# RMSE / diff(range(out))
 
+#Predictive loss
+#PL = var(resid) + var(pred)
+PL <- var()
+
+
+#one step ahead prediction
 
 #extract median and CI for x
 x_med_a <- MCMCvis::MCMCpstr(fit, params = 'x_all',
@@ -350,8 +373,10 @@ ys_LCI_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all',
 ys_UCI_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all',
                             func = function(x) quantile(exp(x), probs = 0.975))[[1]]
 
+
+par(mfrow = c(1, 1))
 #all sites mean
-plot(time, x_med_a, type = 'n', ylim = range(com, na.rm = TRUE),
+plot(time, x_med_a, type = 'n', ylim = range(c(ys_LCI_a, ys_UCI_a), na.rm = TRUE),
      ylab = "Biomass")
 #PI
 polygon(cbind(c(time, rev(time), time[1]),
@@ -365,6 +390,7 @@ polygon(cbind(c(time, rev(time), time[1]),
 lines(1:DATA$NY, x_med_a) #model mean
 
 
-#RMSE
+
 #GP
-#sum log
+#check PL
+#check PL and coverage on random walk
