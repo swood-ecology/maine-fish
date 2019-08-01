@@ -1,10 +1,7 @@
-##################################
-#Ex 6 State Space - JAGS
-##################################
-
-#add hierarchy to get at relationship with env covariates
-#add density dependence
-
+###############
+#Predict lobster abundance with state space and covariates
+#
+###############
 
 
 # set wd ------------------------------------------------------------------
@@ -16,7 +13,6 @@ setwd("~/Google_Drive/R/NEFI_course/EF_Activities/data")
 # load packages -----------------------------------------------------------
 
 library(rjags)
-library(jagsRun)
 library(MCMCvis)
 
 
@@ -24,62 +20,54 @@ library(MCMCvis)
 # load data ---------------------------------------------------------------
 
 setwd('~/Google_Drive/R/NEFI_course/Fish_project/Data/')
-data <- readRDS('Allyn_EcoForecastingProjectData.rds')
+data <- readRDS('LobsterEcoForecastingProjectData.rds')
 
-
-#filter by season and species
-species <- unique(data$CommonName)
-
-#species that move less:
-#lobseter
-#black seabass
-#probs squid
-
-SP_NUM <- 8
-d_spr <- dplyr::filter(data, 
-                         CommonName == species[SP_NUM],
-                         Season == 'SPRING')
-
-d_fall <- dplyr::filter(data, 
-                       CommonName == species[SP_NUM],
+d_spr <- dplyr::filter(data,
                        Season == 'FALL')
 
 yrs <- unique(d_spr$Year)
+zones <- unique(d_spr$ZONEID)
 
 #sort data into df - group by year over space
-out <- data.frame()
+out <- matrix(NA, nrow = length(yrs), ncol =  length(zones))
+SST <- matrix(NA, nrow = length(yrs), ncol =  length(zones))
 for (i in 1:length(yrs))
 {
   #i <- 1
-  temp <- dplyr::filter(d_spr, Year == yrs[i])
-  BM <- sum(temp$Biomass)
-  sst <- mean(temp$SeasonalSST)
-  depth <- mean(temp$Depth)
-  tt <- data.frame(YEAR = yrs[i],
-                   SPECIES = temp$CommonName[1],
-                   BM = BM,
-                   SST = sst,
-                   DEPTH = depth)
-  out <- rbind(out, tt)
+  temp <- dplyr::filter(d_spr, Year == yrs[i], )
+  for (j in 1:length(zones))
+  {
+    #j <- 1
+    temp_z <- dplyr::filter(temp, ZONEID == zones[j])
+    out[i,j] <- mean(temp_z$Biomass)
+    SST[i,j] <- mean(temp_z$SeasonalSST)
+  }
 }
 
-N <- NROW(out)
+#replace 0 with small value (log does like 0)
+z_ind <- which(out == 0, arr.ind = TRUE)
+out[z_ind] <- 0.01
 
-BM2 <- out$BM
-BM2[(N - 2):N] <- NA
+#number of years
+NY <- NROW(out)
+
+#number of zones
+NZ <- NCOL(out)
+
+#i = year
+#j = zone
+out2 <- out
+to.na <- (NY-3):NY
+out2[to.na,] <- NA
 
 DATA <- list(
-  y = log(BM2),
-  year = out$YEAR,
-  depth = out$DEPTH,
-  sst = out$SST,
-  N = N,
-  x_ic = mean(log(out$BM)),
-  tau_ic = 10,
-  a_obs = 1,
-  r_obs = 1,
-  a_add = 1,
-  r_add = 1)
+  y = log(out2),
+  sst = SST,
+  NY = NY,
+  NZ = NZ,
+  x_ic = mean(log(out)), #mean of biomass for initial value
+  tau_ic = 1/(var(as.vector(log(out)))*100)) #variance biomass times 10
+
 
 
 # Model -------------------------------------------------------------------
@@ -87,35 +75,85 @@ DATA <- list(
 setwd("~/Google_Drive/R/NEFI_course/Results")
 
 {
-  sink('RW.jags')
+  sink('mat.jags')
   
   cat("
   
   model {
   
   #observation model
-  for (t in 1:N)
+  for (i in 1:NY)
   {
-    y[t] ~ dnorm(x[t], tau_obs)
+    for (j in 1:NZ)
+    {
+      y[i,j] ~ dnorm(x[i,j], tau_obs)
+      ysim[i,j] ~ dnorm(x[i,j], tau_obs)
+    }
+    #sum ysim across all sites
+    ysim_all[i] <- sum(ysim[i,])
   }
   
+  
+  
   #data model
-  for (t in 2:N)
+  for (i in 2:NY)
   {
-    x[t] ~ dnorm(mu[t], tau_add)
-    mu[t] <- x[t-1] + beta_0 + beta_x * x[t-1] + 
-              beta_1 * depth[t] + beta_2 * sst[t]
+    for (j in 1:NZ)
+    {
+      x[i,j] ~ dnorm(mu[i,j], tau_add)
+      mu[i,j] <- x[i-1,j] + eta + alpha[i] + gamma[j] + 
+                  beta_x * x[i-1,j] + kappa * sst[i,j]
+    }
+    x_all[i] <- sum(x[i,])
   }
   
   #### Priors
-  x[1] ~ dnorm(x_ic, tau_ic)
+  #intial state
+  for (j in 1:NZ)
+  {
+    x[1,j] ~ dnorm(x_ic, tau_ic)
+  }
+  #first time step sum
+  x_all[1] <- sum(x[1,])
   
-  beta_0 ~ dnorm(0, 0.001)
-  beta_x ~ dnorm(0, 0.001)
-  beta_1 ~ dnorm(0, 0.001)
-  beta_2 ~ dnorm(0, 0.001)
-  tau_obs ~ dgamma(a_obs, r_obs)
-  tau_add ~ dgamma(a_add, r_add)
+  #eta - grand mean
+  eta ~ dnorm(0, 0.01)
+  
+  #alpha - year effect
+  for (i in 1:NY)
+  {
+    alpha[i] ~ dnorm(0, tau_alpha)
+  }
+ 
+  #gamma - zone effect
+  for (j in 1:NZ)
+  {
+    gamma[j] ~ dnorm(0, tau_gamma)
+  }
+ 
+  #beta_x - temporal autocorrelation effect
+  beta_x ~ dnorm(0, 0.01)
+  
+  # #k - carrying capacity
+  # for (j in 1:NZ)
+  # {
+  #   k[j] ~ dgamma(0.1, 0.1)
+  # }
+  
+  #kappa - SST effect
+  kappa ~ dnorm(0, 0.01)
+ 
+  #observation error
+  tau_obs ~ dgamma(0.1, 0.1)
+ 
+  #process eror
+  tau_add ~ dgamma(0.1, 0.1)
+ 
+  #prec alpha
+  tau_alpha ~ dgamma(0.1, 0.1)
+ 
+  #prec gamma
+  tau_gamma ~ dgamma(0.1, 0.1)
 
   }",fill = TRUE)
   
@@ -125,20 +163,20 @@ setwd("~/Google_Drive/R/NEFI_course/Results")
 
 
 # Starting values ---------------------------------------------------------
-
-Inits_1 <- list(
-                .RNG.name = "base::Mersenne-Twister", 
-                .RNG.seed = 1)
-
-Inits_2 <- list(
-                .RNG.name = "base::Wichmann-Hill", 
-                .RNG.seed = 2)
-
-Inits_3 <- list(
-                .RNG.name = "base::Marsaglia-Multicarry", 
-                .RNG.seed = 3)
-
-F_Inits <- list(Inits_1, Inits_2, Inits_3)
+# 
+# Inits_1 <- list(
+#   .RNG.name = "base::Mersenne-Twister", 
+#   .RNG.seed = 1)
+# 
+# Inits_2 <- list(
+#   .RNG.name = "base::Wichmann-Hill", 
+#   .RNG.seed = 2)
+# 
+# Inits_3 <- list(
+#   .RNG.name = "base::Marsaglia-Multicarry", 
+#   .RNG.seed = 3)
+# 
+# F_Inits <- list(Inits_1, Inits_2, Inits_3)
 
 
 
@@ -146,10 +184,17 @@ F_Inits <- list(Inits_1, Inits_2, Inits_3)
 
 Pars <- c('tau_obs',
           'tau_add',
-          'beta_0',
+          'eta',
+          'alpha',
+          'gamma',
+          'tau_alpha',
+          'tau_gamma',
           'beta_x',
-          'beta_1',
-          'beta_2',
+          #'k',
+          'kappa',
+          'ysim',
+          'ysim_all',
+          'x_all',
           'x')
 
 
@@ -162,35 +207,33 @@ Pars <- c('tau_obs',
 #         jagsInits = F_Inits,
 #         DEBUG = TRUE)
 
-fit <- jagsRun(jagsData = DATA, 
-               jagsModel = 'RW.jags',
-               jagsInits = F_Inits,
-               params = Pars,
-               jagsID = 'BLSE_1',
-               jagsDsc = 'random walk with cov',
-               obj_out = TRUE,
-               n_chain = 3,
-               n_adapt = 2000,
-               n_burn = 40000,
-               n_draw = 40000,
-               n_thin = 1,
-               EXTRA = FALSE,
-               Rhat_max = 1.1,
-               n_max = 100000)
+
+rjags::load.module("glm")
+
+#compile model
+jm <- rjags::jags.model(data = DATA, 
+                        file = 'mat.jags', 
+                        #inits = start, 
+                        n.chains = 3, 
+                        n.adapt = 2000)
+
+#burn-in
+stats::update(jm, 
+              n.iter = 50000)
+
+#draw samples
+fit <- rjags::coda.samples(jm, 
+                               n.iter = 50000, 
+                               variable.names = Pars, 
+                               thin = 1)
 
 
-#summaries
-MCMCvis::MCMCsummary(fit, params = c('tau_obs', 'tau_add',
-                                     'beta_x', 'beta_0',  
-                                     'beta_1', 'beta_2', 'x'), round = 2)
-MCMCvis::MCMCplot(fit, params = 'x')
-MCMCvis::MCMCplot(fit, params = c('beta_1', 'beta_2'))
+#summarize output
+MCMCvis::MCMCsummary(fit, excl = c('x', 'x_all', 'ysim', 'ysim_all'))
+MCMCvis::MCMCplot(fit, params = 'alpha')
+MCMCvis::MCMCplot(fit, params = 'gamma')
 
-#MCMCvis::MCMCtrace(fit, params = c('tau_obs', 'tau_add', 'x'), ind = TRUE)
-
-
-
-#extract posteriors
+#extract median and CI for x
 x_med <- MCMCvis::MCMCpstr(fit, params = 'x', 
                            func = function(x) median(exp(x)))[[1]]
 x_LCI <- MCMCvis::MCMCpstr(fit, params = 'x', 
@@ -198,22 +241,101 @@ x_LCI <- MCMCvis::MCMCpstr(fit, params = 'x',
 x_UCI <- MCMCvis::MCMCpstr(fit, params = 'x', 
                            func = function(x) quantile(exp(x), probs = 0.975))[[1]]
 
-com <- c(x_med, x_LCI, x_UCI)
+#extract median and CI for ysim (for prediction interval)
+ys_med <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
+                           func = function(x) median(exp(x)))[[1]]
+ys_LCI <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
+                           func = function(x) quantile(exp(x), probs = 0.025))[[1]]
+ys_UCI <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
+                           func = function(x) quantile(exp(x), probs = 0.975))[[1]]
+
+
+#combine to get range for plot
+#com <- c(x_med, x_LCI, x_UCI)
+com <- c(ys_med, ys_LCI, ys_UCI)
+
+
+plt_df <- data.frame(zone = rep(zones, each = NROW(x_med)),
+                     year = rep(yrs, NCOL(x_med)),
+                     x_med = as.vector(x_med),
+                     x_LCI = as.vector(x_LCI),
+                     x_UCI = as.vector(x_UCI),
+                     ys_med = as.vector(ys_med),
+                     ys_LCI = as.vector(ys_LCI),
+                     ys_UCI = as.vector(ys_UCI))
+
+#data witheld
+out_wh <- log(out[to.na,])
 
 #plot
-plot(DATA$year, x_med, type = 'n', ylim = range(com, na.rm = TRUE), 
-     ylab = "Biomass", xlim = range(DATA$year))
-#mean
-lines(DATA$year, x_med, col = 'red', lwd = 2)
-#LCI
-lines(DATA$year, x_LCI, col = 'red', lwd = 2, lty = 2)
-#UCI
-lines(DATA$year, x_UCI, col = 'red', lwd = 2, lty = 2)
-#observed data
-lines(DATA$year, exp(DATA$y), lty = 2)
+time <- 1:DATA$NY
+# plot(time, x_med[,1], type = 'n', ylim = range(com, na.rm = TRUE),
+#      ylab = "Biomass")
+par(mfrow = c(3, 3))
+for (i in 1:NCOL(x_med))
+{
+  plot(time, x_med[,1], type = 'n', ylim = range(com, na.rm = TRUE),
+       ylab = "Biomass", main = paste0('Zone ', zones[i]))
+  #i <- 2
+  #pred
+  polygon(cbind(c(time, rev(time), time[1]), 
+                c(ys_LCI[,i], rev(ys_UCI[,i]), ys_LCI[1,i])), 
+          border = FALSE, col = rgb(0,0,1,0.3))
+  
+  #CI
+  polygon(cbind(c(time, rev(time), time[1]), 
+                c(x_LCI[,i], rev(x_UCI[,i]), x_LCI[1,i])), 
+          border = FALSE, col = rgb(1,0,0,0.3))
+  
+  lines(time, x_med[,i]) #model mean
+  
+  #actual data
+  points(time, exp(DATA$y[,i]), pch = '+', col = 'black')
+  #witheld data
+  points(to.na, exp(out_wh[,i]), pch = '+', col = 'red')
+}
 
-#plot held out data
-na.val <- which(is.na(BM2))
-points(DATA$year[na.val], out$BM[na.val], pch = 19)
+
+#~93 percent of new values fell in 95% pred interval
+sum(exp(out_wh) > ys_LCI[to.na,] &
+  exp(out_wh) < ys_UCI[to.na,]) / length(out_wh)
+
+#RMSE
+(RMSE <- sqrt(mean((x_med[to.na,] - exp(out_wh))^2)))
+RMSE / diff(range(out))
 
 
+# #extract median and CI for x
+# x_med_a <- MCMCvis::MCMCpstr(fit, params = 'x_all', 
+#                            func = function(x) median(exp(x)))[[1]]
+# x_LCI_a <- MCMCvis::MCMCpstr(fit, params = 'x_all', 
+#                            func = function(x) quantile(exp(x), probs = 0.025))[[1]]
+# x_UCI_a <- MCMCvis::MCMCpstr(fit, params = 'x_all', 
+#                            func = function(x) quantile(exp(x), probs = 0.975))[[1]]
+# 
+# #extract median and CI for ysim (for prediction interval)
+# ys_med_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all', 
+#                             func = function(x) median(exp(x)))[[1]]
+# ys_LCI_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all', 
+#                             func = function(x) quantile(exp(x), probs = 0.025))[[1]]
+# ys_UCI_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all', 
+#                             func = function(x) quantile(exp(x), probs = 0.975))[[1]]
+# 
+# #all sites sum
+# plot(time, x_med_a, type = 'n', ylim = range(com, na.rm = TRUE), 
+#      ylab = "Biomass")
+# #PI
+# polygon(cbind(c(time, rev(time), time[1]), 
+#               c(ys_LCI_a, rev(ys_UCI_a), ys_LCI_a[1])), 
+#         border = FALSE, col = rgb(0,0,1,0.3))
+# #CI
+# polygon(cbind(c(time, rev(time), time[1]), 
+#               c(x_LCI_a, rev(x_UCI_a), x_LCI_a[1])), 
+#         border = FALSE, col = rgb(1,0,0,0.3))
+# 
+# lines(1:DATA$NY, x_med_a) #model mean
+
+
+#RMSE
+#GP
+#sum log
