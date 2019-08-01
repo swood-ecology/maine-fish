@@ -1,5 +1,5 @@
 ###############
-#Predict lobster abundance with state space and covariates
+#Predict lobster abundance with state space and covariates and k
 #
 ###############
 
@@ -101,7 +101,7 @@ setwd("~/Google_Drive/R/NEFI_course/Results")
     {
       x[i,j] ~ dnorm(mu[i,j], tau_add)
       mu[i,j] <- x[i-1,j] + eta + alpha[i] + gamma[j] +
-                  beta_x * x[i-1,j] + kappa * sst[i,j]
+                  beta_x * x[i-1,j] * (1-(x[i-1,j]/k))
     }
     x_all[i] <- mean(x[i,])
   }
@@ -143,10 +143,10 @@ setwd("~/Google_Drive/R/NEFI_course/Results")
   #     #k[i,j] = alpha_k + beta_k * sst[i,j]
   #   }
   # }
-  # k ~ dnorm(0, 0.01)
+  k ~ dnorm(0, 0.01)
   
   #kappa - SST effect
-  kappa ~ dnorm(0, 0.01)
+  #kappa ~ dnorm(0, 0.01)
   
   #alpha_k - intercept SST effect on k
   # for (j in 1:NZ)
@@ -187,17 +187,17 @@ setwd("~/Google_Drive/R/NEFI_course/Results")
 x_init <- matrix(nrow = DATA$NY, ncol = DATA$NZ)
 x_init[1,] <- rep(1, DATA$NZ)
 
-Inits_1 <- list(x = x_init,
-  .RNG.name = "base::Mersenne-Twister",
-  .RNG.seed = 1)
+Inits_1 <- list(x = x_init, k = 1,
+                .RNG.name = "base::Mersenne-Twister",
+                .RNG.seed = 1)
 
-Inits_2 <- list(x = x_init,
-  .RNG.name = "base::Wichmann-Hill",
-  .RNG.seed = 2)
+Inits_2 <- list(x = x_init, k = 1,
+                .RNG.name = "base::Wichmann-Hill",
+                .RNG.seed = 2)
 
-Inits_3 <- list(x = x_init,
-  .RNG.name = "base::Marsaglia-Multicarry",
-  .RNG.seed = 3)
+Inits_3 <- list(x = x_init, k = 1,
+                .RNG.name = "base::Marsaglia-Multicarry",
+                .RNG.seed = 3)
 
 F_Inits <- list(Inits_1, Inits_2, Inits_3)
 
@@ -213,13 +213,13 @@ Pars <- c('tau_obs',
           'tau_alpha',
           'tau_gamma',
           'beta_x',
-          # 'k',
+          'k',
           # 'alpha_k',
           # 'mu_alpha_k',
           # 'tau_alpha_k',
           # 'beta_k',
-          # 'tau_k',
-          'kappa',
+          'tau_k',
+          #'kappa',
           'ysim',
           'ysim_all',
           'x_all',
@@ -247,20 +247,20 @@ jm <- rjags::jags.model(data = DATA,
 
 #burn-in
 stats::update(jm, 
-              n.iter = 50000)
+              n.iter = 100000)
 
 #draw samples
 fit <- rjags::coda.samples(jm, 
-                               n.iter = 50000, 
-                               variable.names = Pars, 
-                               thin = 1)
+                           n.iter = 100000, 
+                           variable.names = Pars, 
+                           thin = 1)
 
 
 #summarize output
 MCMCvis::MCMCsummary(fit, excl = c('x', 'x_all', 'ysim', 'ysim_all'), round = 2)
 MCMCvis::MCMCplot(fit, params = 'alpha')
 MCMCvis::MCMCplot(fit, params = 'gamma')
-MCMCvis::MCMCplot(fit, params = c('alpha_k', 'beta_k', 'beta_x'))
+
 
 #extract median and CI for x
 x_med <- MCMCvis::MCMCpstr(fit, params = 'x', 
@@ -272,11 +272,11 @@ x_UCI <- MCMCvis::MCMCpstr(fit, params = 'x',
 
 #extract median and CI for ysim (for prediction interval)
 ys_med <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
-                           func = function(x) median(exp(x)))[[1]]
+                            func = function(x) median(exp(x)))[[1]]
 ys_LCI <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
-                           func = function(x) quantile(exp(x), probs = 0.025))[[1]]
+                            func = function(x) quantile(exp(x), probs = 0.025))[[1]]
 ys_UCI <- MCMCvis::MCMCpstr(fit, params = 'ysim', 
-                           func = function(x) quantile(exp(x), probs = 0.975))[[1]]
+                            func = function(x) quantile(exp(x), probs = 0.975))[[1]]
 
 
 #combine to get range for plot
@@ -327,28 +327,28 @@ for (i in 1:NCOL(x_med))
 
 #~93 percent of new values fell in 95% pred interval
 sum(exp(out_wh) > ys_LCI[to.na,] &
-  exp(out_wh) < ys_UCI[to.na,]) / length(out_wh)
+      exp(out_wh) < ys_UCI[to.na,]) / length(out_wh)
 
-#RMSE = 30.6
+#RMSE = 32.8
 (RMSE <- sqrt(mean((x_med[to.na,] - exp(out_wh))^2)))
 RMSE / diff(range(out))
 
 
 #extract median and CI for x
 x_med_a <- MCMCvis::MCMCpstr(fit, params = 'x_all',
-                           func = function(x) median(exp(x)))[[1]]
+                             func = function(x) median(exp(x)))[[1]]
 x_LCI_a <- MCMCvis::MCMCpstr(fit, params = 'x_all',
-                           func = function(x) quantile(exp(x), probs = 0.025))[[1]]
+                             func = function(x) quantile(exp(x), probs = 0.025))[[1]]
 x_UCI_a <- MCMCvis::MCMCpstr(fit, params = 'x_all',
-                           func = function(x) quantile(exp(x), probs = 0.975))[[1]]
+                             func = function(x) quantile(exp(x), probs = 0.975))[[1]]
 
 #extract median and CI for ysim (for prediction interval)
 ys_med_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all',
-                            func = function(x) median(exp(x)))[[1]]
+                              func = function(x) median(exp(x)))[[1]]
 ys_LCI_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all',
-                            func = function(x) quantile(exp(x), probs = 0.025))[[1]]
+                              func = function(x) quantile(exp(x), probs = 0.025))[[1]]
 ys_UCI_a <- MCMCvis::MCMCpstr(fit, params = 'ysim_all',
-                            func = function(x) quantile(exp(x), probs = 0.975))[[1]]
+                              func = function(x) quantile(exp(x), probs = 0.975))[[1]]
 
 #all sites mean
 plot(time, x_med_a, type = 'n', ylim = range(com, na.rm = TRUE),
