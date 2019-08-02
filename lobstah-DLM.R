@@ -37,21 +37,20 @@ HigherDLM = "
 
   #### Process Model
   for(i in 2:n){
-    mu[i] <- x[i-1] + alpha_site[zoneid[i]] + beta1*x1[i] + beta2*x2[i]
+    mu[i] <- x[i-1] + alpha_site[zoneid[i]] + beta*sst[i]
     x[i] ~ dnorm(mu[i], tau_add)
   }
 
   #### Priors
   x[1] ~ dnorm(x_ic,tau_ic)
-  beta1 ~ dnorm(0,1)
-  beta2 ~ dnorm(0,1)
+  beta ~ dnorm(0,1)
   tau_obs ~ dgamma(a_obs,r_obs)
   tau_add ~ dgamma(a_add,r_add)
   tau_site ~ dgamma(0.1,0.1)  ## site random effect precision
 }
 "
 
-h.dlm.data <- list(y = logBiomass, x1 = Depth, x2 = SeasonalSST,
+h.dlm.data <- list(y = logBiomass, sst = SeasonalSST,
                  n = logBiomass %>% length(), 
                  ng = ZONEID %>% unique() %>% length(), 
                  zoneid = ZONEID %>% as.numeric(), 
@@ -63,20 +62,21 @@ h.dlm.model <- jags.model(data = h.dlm.data,
                           n.chains = 4)
 
 h.dlm.out <- coda.samples (model = h.dlm.model,
-                           variable.names = c("alpha_site","beta1", "beta2",
+                           variable.names = c("alpha_site","beta", 
                                               "tau_add","tau_obs","tau_site",
                                               "x"),
                            n.iter = 10000)
 
 gelman.plot(h.dlm.out)
 
-burnin = 1000
+burnin = 5000
 hrw.burn <- window(h.dlm.out, burnin)
+summary(hrw.burn)
 
 
 # Fit DLM model with ecoforecastR
 ef.out <- ecoforecastR::fit_dlm(
-  model = list(obs = "logBiomass", fixed = "~ 1 + X + Depth + SeasonalSST"),
+  model = list(obs = "logBiomass", fixed = "~ 1 + X + SeasonalSST"),
   mean.lobstah.data
 )
 
@@ -95,5 +95,58 @@ plot(mean.lobstah.data$Year,
 ## adjust x-axis label to be monthly if zoomed
 ecoforecastR::ciEnvelope(mean.lobstah.data$Year, dlm.ci[1, ], dlm.ci[3, ], col = ecoforecastR::col.alpha("lightBlue", 0.75))
 points(mean.lobstah.data$Year, mean.lobstah.data$logBiomass, pch = "+", cex = 0.5)
+
+
+########################
+# Fit random slope DLM #
+########################
+
+# Define the model
+RSDLM = "
+model{
+  #### Data Model
+  for(i in 1:n){
+    y[i] ~ dnorm(x[i],tau_obs)
+  }
+
+  #### Random Effect
+  for(g in 1:ng){
+    beta_site[g] ~ dnorm(0.2,0.1)
+    alpha_site[g] ~ dnorm(2.0,0.1)
+  }
+
+  #### Process Model
+  for(i in 2:n){
+    mu[i] <- x[i-1] + alpha_site[zoneid[i]] + beta_site[zoneid[i]]*sst[i]
+    x[i] ~ dnorm(mu[i], tau_add)
+  }
+
+  #### Priors
+  x[1] ~ dnorm(x_ic,tau_ic)
+  tau_obs ~ dgamma(0.1,0.1)
+  tau_add ~ dgamma(0.1,0.1)
+}
+"
+
+h.dlm.data <- list(y = logBiomass, sst = SeasonalSST,
+                   n = logBiomass %>% length(), 
+                   ng = ZONEID %>% unique() %>% length(), 
+                   zoneid = ZONEID %>% as.numeric(), 
+                   x_ic = 2.5, tau_ic = 0.1)
+
+h.dlm.model <- jags.model(data = h.dlm.data, 
+                          file = textConnection(RSDLM),
+                          n.chains = 4)
+
+h.dlm.out <- coda.samples (model = h.dlm.model,
+                           variable.names = c("alpha_site","beta_site",
+                                              "tau_add","tau_obs","x"),
+                           n.iter = 10000)
+gelman.plot(h.dlm.out)
+
+burnin = 8000
+hrw.burn <- window(h.dlm.out, burnin)
+summary(hrw.burn)
+
 
 detach(mean.lobstah.data)
